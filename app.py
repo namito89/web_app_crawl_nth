@@ -9,6 +9,7 @@ from urllib.parse import quote
 import dateparser
 import io
 from playwright.sync_api import sync_playwright
+import os
 
 st.set_page_config(page_title="📰 Crawler Tin tức", layout="wide")
 
@@ -74,10 +75,19 @@ if st.button("🚀 BẮT ĐẦU CRAWL (Playwright - giống notebook gốc)", ty
     keywords = [kw.strip() for kw in keywords_str.split(',') if kw.strip()]
     
     with st.spinner("Đang khởi động Playwright + crawl (3-6 phút)..."):
+        os.system("playwright install --with-deps chromium")
+        st.write("✅ Đã cài Chromium (chỉ lần đầu)")
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--disable-extensions",
+                    "--disable-background-networking"
+                ]
             )
             page = browser.new_page()
             page.set_extra_http_headers({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
