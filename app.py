@@ -1,10 +1,5 @@
 import streamlit as st
 import pandas as pd
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.common.by import By
 from bs4 import BeautifulSoup
 import requests
 from datetime import datetime, date
@@ -13,11 +8,12 @@ import re
 from urllib.parse import quote
 import dateparser
 import io
+from playwright.sync_api import sync_playwright
 
 st.set_page_config(page_title="📰 Crawler Tin tức", layout="wide")
 
-st.title("📰 Crawler Tin tức VnExpress & CafeF (Dùng đúng code gốc của bạn)")
-st.markdown("**Giống hệt notebook cũ – chỉ thay giao diện web**")
+st.title("📰 Crawler Tin tức VnExpress & CafeF (Playwright - ổn định trên Cloud)")
+st.markdown("**Giống hệt notebook gốc của bạn, chỉ thay Selenium bằng Playwright**")
 
 keywords_str = st.text_input(
     "Nhập từ khóa (cách nhau dấu phẩy):",
@@ -28,43 +24,44 @@ target_date = st.date_input(
     value=date(2026, 3, 15)
 )
 
-def crawl_vnexpress(driver, keyword):
+def crawl_vnexpress(page, keyword):
     data = []
     base_url = f"https://timkiem.vnexpress.net/?search_q={quote(keyword)}"
     st.write(f"Đang crawl VnExpress: **{keyword}**")
     
-    for page in range(1, 3):
-        url = base_url if page == 1 else f"{base_url}&page={page}"
-        driver.get(url)
-        time.sleep(4)
-        articles = driver.find_elements(By.CSS_SELECTOR, "h3.title-news")
-        st.write(f"  VnExpress - Trang {page}: Tìm thấy {len(articles)} bài")
+    for page_num in range(1, 3):
+        url = base_url if page_num == 1 else f"{base_url}&page={page_num}"
+        page.goto(url, wait_until="networkidle", timeout=15000)
+        page.wait_for_timeout(4000)
         
-        for article in articles:
+        articles = page.locator("h3.title-news a").all()
+        st.write(f"  VnExpress - Trang {page_num}: Tìm thấy {len(articles)} bài")
+        
+        for a in articles:
             try:
-                a_tag = article.find_element(By.TAG_NAME, "a")
-                title = a_tag.text.strip()
+                title = a.text_content().strip()
                 if keyword.lower() not in title.lower(): continue
-                link = a_tag.get_attribute("href")
+                link = a.get_attribute("href")
                 if link and "vnexpress.net" in link:
                     data.append({'Keyword': keyword, 'Tiêu đề': title, 'Link': link})
             except:
                 continue
     return data
 
-def crawl_cafef(driver, keyword):
+def crawl_cafef(page, keyword):
     data = []
     base_url = f"https://cafef.vn/tim-kiem.chn?keywords={quote(keyword)}"
     st.write(f"Đang crawl CafeF: **{keyword}**")
     
-    for page in range(1, 3):
-        url = base_url if page == 1 else f"https://cafef.vn/tim-kiem/trang-{page}.chn?keywords={quote(keyword)}"
-        driver.get(url)
-        time.sleep(4)
+    for page_num in range(1, 3):
+        url = base_url if page_num == 1 else f"https://cafef.vn/tim-kiem/trang-{page_num}.chn?keywords={quote(keyword)}"
+        page.goto(url, wait_until="networkidle", timeout=15000)
+        page.wait_for_timeout(4000)
         
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        html = page.content()
+        soup = BeautifulSoup(html, 'html.parser')
         articles = soup.find_all('a', href=lambda h: h and '.chn' in h and 'tim-kiem' not in h)
-        st.write(f"  CafeF - Trang {page}: Tìm thấy {len(articles)} bài")
+        st.write(f"  CafeF - Trang {page_num}: Tìm thấy {len(articles)} bài")
         
         for article in articles:
             title = article.text.strip()
@@ -73,24 +70,25 @@ def crawl_cafef(driver, keyword):
             data.append({'Keyword': keyword, 'Tiêu đề': title, 'Link': "https://cafef.vn" + link})
     return data
 
-if st.button("🚀 BẮT ĐẦU CRAWL (giống notebook gốc)", type="primary", use_container_width=True):
+if st.button("🚀 BẮT ĐẦU CRAWL (Playwright - giống notebook gốc)", type="primary", use_container_width=True):
     keywords = [kw.strip() for kw in keywords_str.split(',') if kw.strip()]
     
-    with st.spinner("Đang khởi động Chrome headless + crawl (5-10 phút)..."):
-        options = Options()
-        options.add_argument("--headless=new")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--window-size=1920,1080")
-        
-        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-        
-        all_data = []
-        for kw in keywords:
-            all_data.extend(crawl_vnexpress(driver, kw))
-            all_data.extend(crawl_cafef(driver, kw))
-        
-        driver.quit()
+    with st.spinner("Đang khởi động Playwright + crawl (3-6 phút)..."):
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+            )
+            page = browser.new_page()
+            page.set_extra_http_headers({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            
+            all_data = []
+            for kw in keywords:
+                all_data.extend(crawl_vnexpress(page, kw))
+                all_data.extend(crawl_cafef(page, kw))
+                time.sleep(1)
+            
+            browser.close()
 
     # Phần lọc ngày GIỐNG NGUYÊN BẢN notebook của bạn
     df = pd.DataFrame(all_data)
@@ -104,7 +102,6 @@ if st.button("🚀 BẮT ĐẦU CRAWL (giống notebook gốc)", type="primary",
     progress_bar = st.progress(0)
 
     for i, (idx, row) in enumerate(df_new.iterrows()):
-        # (phần lọc ngày giữ nguyên 100% code cũ của bạn – mình không thay đổi)
         url = str(row.get('Link', '')).strip()
         if not url: 
             progress_bar.progress((i+1)/len(df_new))
@@ -113,6 +110,7 @@ if st.button("🚀 BẮT ĐẦU CRAWL (giống notebook gốc)", type="primary",
             response = requests.get(url, headers=headers, timeout=10)
             soup = BeautifulSoup(response.text, 'html.parser')
             
+            # (toàn bộ phần parse ngày giữ nguyên 100% như notebook cũ của bạn)
             date_text = None
             meta = soup.find('meta', attrs={'property': 'article:published_time'}) or \
                    soup.find('meta', attrs={'name': ['article:published_time', 'pubdate', 'publishdate']})
