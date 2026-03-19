@@ -1,6 +1,4 @@
 streamlit
-selenium
-webdriver-manager
 pandas
 beautifulsoup4
 requests
